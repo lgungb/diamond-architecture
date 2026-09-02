@@ -24,7 +24,7 @@
    ```bash
    pip install -r requirements.txt
    ```
-   > ⚠️ 关键：`transformers` 必须装 **5.2.0**（Qwen3.5 系列只能用这个版本，5.3.0 会报错）。
+   > ⚠️ 关键：`transformers` 必须装 **>= 5.3.0**（Qwen3.5 的 qwen3_5 架构只有 5.3.0 及以上才认识；5.2.0 及以下会报"模型类型无法识别"）。
 3. **先跑一次冒烟测试**（几分钟走通全流程，确认环境没问题）：
    ```bash
    python 运行/主入口.py
@@ -68,7 +68,7 @@
 
 ## 五、常见问题
 
-- **transformers 版本报错？** 执行 `pip install transformers==5.2.0`。
+- **transformers 版本报错（不认识 qwen3_5 架构）？** 执行 `pip install "transformers>=5.3.0"`；仍不行再 `pip install git+https://github.com/huggingface/transformers.git`。
 - **显卡显存不够？** 把 `配置/配置.py` 里 `批次大小` 调到 `1`，`是否开启梯度检查点` 保持 `True`。
 - **模型下载慢/失败？** 这是国内网络访问魔搭，一般很快；确认能访问 modelscope.cn。
 - **"类别词不是单个token"报错？** 换 `配置.py` 里 `任务类别` 为常见的单字词。

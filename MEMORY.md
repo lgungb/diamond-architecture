@@ -25,7 +25,7 @@
 diamond-architecture/
 ├── README.md               # 人读的说明（快速开始/常见问题）
 ├── MEMORY.md               # ★本文件：AI/人 记忆
-├── requirements.txt        # 依赖（transformers==5.2.0 是硬约束！）
+├── requirements.txt        # 依赖（transformers>=5.3.0 是硬约束！）
 ├── .gitignore              # 忽略 缓存/ 结果/ __pycache__/
 │
 ├── 配置/
@@ -67,7 +67,7 @@ diamond-architecture/
 | `数据/合成数据.py` | 生成训练/测试/校准三套密语数据 | 需要分词器、torch |
 | `数据/真实数据.py` | 可选：魔搭真实数据 | datasets；需用户填字段 |
 | `数据/数据接口.py` | 数据统一入口 + 类别词校验 | 无 |
-| `模型/模型加载.py` | snapshot_download + 自适应加载（文本失败→多模态） | modelscope、transformers>=5.2 |
+| `模型/模型加载.py` | snapshot_download + 自适应加载（文本失败→多模态，全部失败给安装指引） | modelscope、transformers>=5.3 |
 | `模型/模型工具.py` | 参数/状态/显存/加载器工具 | torch |
 | `模型/微调.py` | 分类训练器（全参/LoRA 通用）+ LoRA 包装 | torch、peft(LoRA) |
 | `模型/计算重要度.py` | Fisher 信息（梯度平方累加） | torch |
@@ -113,7 +113,7 @@ diamond-architecture/
 3. **Fisher 在基座 A 上算**（对齐 FISH-Mask 标准做法/白皮书意图），配置里留了"专家"选项未实现。
 4. **补丁评估 = 加载一次 + 反复 load_state_dict 重置**：省时省显存；显存调度顺序：Fisher 重要度(8GB fp32) 算完立刻搬 CPU → 再全参微调 → 微调完拿完专家参数就释放 → 再加载 A 评估补丁。
 5. **加载自适应**：Qwen3.5 是多模态模型，`AutoModelForCausalLM` 失败会自动切 `AutoModelForImageTextToText`；配置 `加载方式="自动"`。
-6. **transformers==5.2.0 是硬约束**（qwen3_5 架构要求；5.3.0 目前会报错）。
+6. **transformers>=5.3.0 是硬约束**：qwen3_5 架构只有 5.3.0+ 才认识（曾误以为 5.2.0 可行导致用户报错，已修正；5.2.0 及以下报 "model type qwen3_5 无法识别"）。requirements 里已锁 >=5.3.0。
 7. **冒烟模式**：一键缩小规模，先验证流程，再跑正式实验。
 
 ---
@@ -132,7 +132,7 @@ diamond-architecture/
 
 ## 6. 已知风险 / 待用户反馈确认的点
 
-1. **Qwen3.5-2B 是多模态模型**，用纯文本方式喂文本应可行；若加载报错，用户反馈后我需调整（比如改用 `AutoModelForImageTextToText` 已内置兜底；若仍不行，可换文本版模型 ID）。
+1. **Qwen3.5-2B 是多模态模型**，用纯文本方式喂文本应可行。加载已做多重兜底：AutoModelForCausalLM → AutoModelForImageTextToText → 全部失败时抛带安装指引的报错（提示升级 transformers>=5.3.0）。分词器同样有 AutoTokenizer → AutoProcessor 兜底。
 2. **全参数微调 2B 模型显存压力**：默认 bf16 + 梯度检查点 + batch=4 累积4；若 OOM，把 batch 降到 1~2。
 3. **Fisher 全模型 fp32 buffer ≈ 8GB**：加上模型本身需 ≥16GB 显存；A10 24G 够。小显存环境需要改成分层计算（未实现，注释里已提醒）。
 4. **LoRA 的 target_modules 是运行时探测的**（q_proj 等），若 Qwen3.5 命名不同会报错，用户反馈后调整。
@@ -157,3 +157,10 @@ diamond-architecture/
   - 已修的关键坑：① 中文句子里误用 ASCII 引号导致的 SyntaxError；② `模型.device` 属性不存在 → 改用 `next(模型.parameters()).device`；③ 补丁差值计算跨设备索引 → 先搬到专家张量设备再取回 CPU 减；④ CPU 无显卡时跳过 autocast；⑤ AdamW 只对 requires_grad 参数生效（适配 LoRA 冻结）。
   - 已知待用户反馈：模型加载方式、显存、LoRA 模块名是否 OK。
   - 下一步：用户跑冒烟测试 → 按反馈修 → 补正式实验报告解读。
+
+- **[2026-09-02] v0.1.1 修复：Qwen3.5 加载报错（qwen3_5 架构无法识别）**
+  - **根因**：transformers 版本。Qwen3.5 的 qwen3_5 架构要求 transformers>=5.3.0；v0.1 误锁 `==5.2.0`，导致 `AutoConfig` 报 `KeyError: 'qwen3_5'`。
+  - **修复**：requirements.txt 改为 `transformers>=5.3.0`（并补 qwen-vl-utils>=0.0.14 备用）；环境自检最低版本改 5.3.0；README/MEMORY 同步修正。
+  - **加载逻辑增强**：`模型/模型加载.py` 的 加载模型主干 改为"依次尝试文本→多模态→全部失败给明确安装指引"；加载分词器 增加 AutoProcessor 兜底。
+  - **用户操作**：在 notebook 执行 `pip install "transformers>=5.3.0"`（或重装 requirements）后重跑。
+  - **待观察**：Qwen3.5 多模态模型纯文本前向是否正常、LoRA 目标模块探测是否命中（Qwen3.5 是 Gated DeltaNet 混合架构，层名可能与 q_proj 等不同，报错再调）。
