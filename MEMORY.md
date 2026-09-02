@@ -63,7 +63,7 @@ diamond-architecture/
 | 文件 | 干什么 | 依赖/条件 |
 | --- | --- | --- |
 | `运行/主入口.py` | 唯一启动点；自检→硬性检查(torch版本+GPU)→跑实验 | 无 |
-| `配置/配置.py` | 全部参数；用户只改这里 | 无第三方库 |
+| `配置/配置.py` | 全部参数；用户只改这里（含 优化器=adafactor 默认） | 无第三方库 |
 | `工具/环境自检.py` | 检查 Python/库/显卡/模型缓存 | torch(可缺)、modelscope |
 | `工具/环境体检.py` | 深度诊断（解释器/库导入/torch GPU状态/pip记录/显卡），出问题先跑它 | 仅标准库 |
 | `数据/合成数据.py` | 生成训练/测试/校准三套密语数据 | 需要分词器、torch |
@@ -90,7 +90,7 @@ diamond-architecture/
 ├─ 步骤 3: 评估基座 A（预期≈33% 随机水平）
 ├─ 步骤 4: 在 A 上算 Fisher 重要度（校准集 60 条，梯度平方累加）→ 搬到 CPU 释放显存
 ├─ 步骤 5: 保存 A 完整权重到 结果/基座A状态.pt
-├─ 步骤 6: 全参数微调 A→B（AdamW, lr=3e-5, bf16, 梯度检查点）→ 评估（预期≈99%）→ 保存B状态
+├─ 步骤 6: 全参数微调 A→B（Adafactor, lr=3e-5, bf16, 梯度检查点）→ 评估（预期≈99%）→ 保存B状态
 ├─ 步骤 7: 生成补丁（策略A:2/4/6%、策略B:2%、策略C:6%）——只存被选位置的 Δ=B−A
 ├─ 步骤 8: 重新加载 A；对每个补丁: 重置A → 盖补丁 → 评估 + 计时切换
 ├─ 步骤 9: LoRA 对照组（r=16/64，训练→合并→评估）
@@ -113,11 +113,14 @@ diamond-architecture/
 1. **用"合成密语任务"而不是真实数据**：密语词是生造的，基座必然不认识 → 基座≈随机、微调≈满分，验证"补丁恢复多少提升"最干净；且离线可用，避免下载不稳定。
 2. **只算类别 token 上的交叉熵**（不是整句 LM loss）：任务本质是分类，损失聚焦后 Fisher 打分更精准、微调更快。
 3. **Fisher 在基座 A 上算**（对齐 FISH-Mask 标准做法/白皮书意图），配置里留了"专家"选项未实现。
-4. **补丁评估 = 加载一次 + 反复 load_state_dict 重置**：省时省显存；显存调度顺序：Fisher 重要度(8GB fp32) 算完立刻搬 CPU → 再全参微调 → 微调完拿完专家参数就释放 → 再加载 A 评估补丁。
+4. **补丁评估 = 加载一次 + 反复 load_state_dict 重置**：省时省显存；显存调度顺序：Fisher 重要度(bf16 ≈4.5GB) 算完立刻搬 CPU → 再全参微调 → 微调完拿完专家参数就释放 → 再加载 A 评估补丁。
 5. **加载自适应**：Qwen3.5 是多模态模型，`AutoModelForCausalLM` 失败会自动切 `AutoModelForImageTextToText`；配置 `加载方式="自动"`。
-6. **transformers>=5.3.0 是硬约束**：qwen3_5 架构只有 5.3.0+ 才认识（曾误以为 5.2.0 可行导致用户报错，已修正）。requirements 里已锁 >=5.3.0。
+6. **transformers>=5.3.0 是硬约束**：qwen3_5 架构只有 5.3.0+ 才认识（曾误以为 5.2.0 可行导致用户报错，已修正；5.2.0 及以下报 "model type qwen3_5 无法识别"）。requirements 里已锁 >=5.3.0。
 7. **torch>=2.5.0 且 GPU 版 是硬约束**：transformers 5.x 要求 torch>=2.5（否则禁用 PyTorch）；且 2B 全参微调必须 GPU（CPU 实例不可行）。主入口做三段硬检：能 import→版本≥2.5→有 CUDA。
-8. **冒烟模式**：一键缩小规模，先验证流程，再跑正式实验。
+8. **优化器默认 adafactor**：AdamW 对 2B 全参微调需要约 27GB fp32 优化器状态，24G 卡必爆（用户已实测 OOM，词嵌入一个状态张量就 1.89GB）；Adafactor 状态占用极小，效果对这个分类任务足够。配置 优化器 可切回 adamw。
+9. **Fisher 重要度表用 bf16 累加**（比 fp32 省一半显存）并开启梯度检查点：老写法 `grad.float()**2` 每步生成 fp32 大临时张量（词嵌入 2GB），是 Fisher 阶段 OOM 主因。
+10. **PYTORCH_ALLOC_CONF=expandable_segments:True**：主入口在 import torch 前设置，减少显存碎片。
+11. **冒烟模式**：一键缩小规模，先验证流程，再跑正式实验。
 
 ---
 
@@ -136,12 +139,11 @@ diamond-architecture/
 ## 6. 已知风险 / 待用户反馈确认的点
 
 1. **Qwen3.5-2B 是多模态模型**，用纯文本方式喂文本应可行。加载已做多重兜底：AutoModelForCausalLM → AutoModelForImageTextToText → 全部失败时抛带安装指引的报错（提示升级 transformers>=5.3.0）。分词器同样有 AutoTokenizer → AutoProcessor 兜底。
-2. **运行环境必须是 GPU 实例 + GPU 版 torch(>=2.5)**：用户的第一个笔记本是 CPU 实例（torch 2.3.1+cpu，无 nvidia-smi），已被硬检拦截。正式跑必须在魔搭新建 GPU 免费实例（A10 24G）。
-3. **全参数微调 2B 模型显存压力**：默认 bf16 + 梯度检查点 + batch=4 累积4；若 OOM，把 batch 降到 1~2。
-4. **Fisher 全模型 fp32 buffer ≈ 8GB**：加上模型本身需 ≥16GB 显存；A10 24G 够。小显存环境需要改成分层计算（未实现，注释里已提醒）。
-5. **LoRA 的 target_modules 是运行时探测的**（q_proj 等），若 Qwen3.5 命名不同会报错，用户反馈后调整。
-6. **策略C 的"中段"是简化实现**（每张量局部而非全局），量级正确但口径与 A/B 不同。
-7. 补丁评估/切换耗时是**显存内覆盖**，不含磁盘加载补丁的时间；报告里已注明。
+2. **全参数微调 2B 模型显存压力**：默认 bf16 + 梯度检查点 + Adafactor 优化器 + batch=4 累积4（约 10~11GB，24G 卡够）；若 OOM，把 batch 降到 1~2。
+3. **Fisher 全模型 bf16 buffer ≈ 4.5GB**（比早期 fp32 8GB 省一半）：加上模型本身约需 12GB 显存；A10 24G 够。
+4. **LoRA 的 target_modules 是运行时探测的**（q_proj 等），若 Qwen3.5 命名不同会报错，用户反馈后调整。
+5. **策略C 的"中段"是简化实现**（每张量局部而非全局），量级正确但口径与 A/B 不同。
+6. 补丁评估/切换耗时是**显存内覆盖**，不含磁盘加载补丁的时间；报告里已注明。
 
 ---
 
@@ -186,3 +188,15 @@ diamond-architecture/
     - `工具/环境体检.py`：新增【4.5】torch GPU 状态（torch.version.cuda 为 None 即 CPU 版）。
     - `README.md`：快速开始加"必须 GPU 实例"警告 + torch 常见问题两条。
   - **用户下一步（关键）**：到魔搭【新建 Notebook】选【GPU 免费实例】（A10 24G），在那里重新 clone + 装依赖 + 运行；不要在 CPU 实例上跑。
+
+- **[2026-09-02] v0.1.4 修复：GPU 实例上爆显存（CUDA out of memory）**
+  - **用户报错**：切到 24G 显卡后 `torch.OutOfMemoryError: Tried to allocate 1.89 GiB ... total capacity 22.18 GiB ... 16.42 GiB allocated by PyTorch`。
+  - **根因（两处）**：① 微调用 `AdamW`，对 2B 全参微调要额外约 27GB fp32 优化器状态（词嵌入层 508M 参数，单个 fp32 状态张量就 ~2GB，正是报错那个 1.89GB）；② Fisher 用 fp32 累加缓冲（9GB）+ `grad.float()**2` 每步生成 fp32 大临时张量（词嵌入 2GB），加上模型与激活，22GB 卡装不下。
+  - **修复**：
+    - `配置/配置.py`：新增 `优化器` 字段，默认 `"adafactor"`（内存占用极小），可切回 `"adamw"`。
+    - `模型/微调.py`：分类训练器按配置选择优化器——adafactor（scale_parameter=False/relative_step=False/warmup_init=False, lr 用配置值）或 adamw。
+    - `模型/计算重要度.py`：重要度累加表改 bf16（省一半显存，卡不支持 bf16 时自动回 fp32）；累加改 `grad.detach()**2`（不再生成 fp32 大临时张量）；开启梯度检查点防激活 OOM。
+    - `运行/主入口.py`：在 import torch 前设置 `PYTORCH_ALLOC_CONF=expandable_segments:True` 减少碎片。
+    - `README.md`/`MEMORY.md`：同步说明（优化器选择、显存量级、FAQ）。
+  - **预期显存**：全参微调约 10~11GB、Fisher 约 12GB，A10 24G 足够。
+  - **待用户反馈**：重跑后下一个报错点（重点盯：多模态模型纯文本前向、LoRA target_modules 探测、正式模式的显存余量）。

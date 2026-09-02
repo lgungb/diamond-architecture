@@ -75,7 +75,7 @@
 - **transformers 版本报错（不认识 qwen3_5 架构）？** 执行 `pip install "transformers>=5.3.0"`；仍不行再 `pip install git+https://github.com/huggingface/transformers.git`。
 - **报"PyTorch was not found / PyTorch >= 2.5 is required"？** 说明 torch 没装或版本太旧（如 2.3.1）。先确认你在 GPU 实例上，再执行 `!pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu124`，装完重启内核。
 - **提示没有 GPU（nvidia-smi 不存在）？** 你当前是 CPU 实例，本实验跑不动。请到魔搭新建一个【GPU 免费实例】重新拉取仓库运行。
-- **显卡显存不够？** 把 `配置/配置.py` 里 `批次大小` 调到 `1`，`是否开启梯度检查点` 保持 `True`。
+- **爆显存（CUDA out of memory）？** 默认已用内存友好的 Adafactor 优化器（不再用 AdamW）+ bf16 Fisher。如果还爆，把 `配置/配置.py` 里 `批次大小` 调到 `1~2`，`是否开启梯度检查点` 保持 `True`。
 - **模型下载慢/失败？** 这是国内网络访问魔搭，一般很快；确认能访问 modelscope.cn。
 - **"类别词不是单个token"报错？** 换 `配置.py` 里 `任务类别` 为常见的单字词。
 - **本地电脑要不要跑？** 不需要。本地只改代码、提交 GitHub；跑实验在 modelscope Notebook 上。
