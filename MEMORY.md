@@ -69,8 +69,8 @@ diamond-architecture/
 | `数据/合成数据.py` | 生成训练/测试/校准三套密语数据 | 需要分词器、torch |
 | `数据/真实数据.py` | 可选：魔搭真实数据 | datasets；需用户填字段 |
 | `数据/数据接口.py` | 数据统一入口 + 类别词校验 | 无 |
-| `模型/模型加载.py` | snapshot_download + 自适应加载（文本失败→多模态，全部失败给安装指引） | modelscope、transformers>=5.3 |
-| `模型/模型工具.py` | 参数/状态/显存/加载器工具 | torch |
+| `模型/模型加载.py` | **先查本地缓存**（查找已下载模型路径）→没有才 snapshot_download；自适应加载（文本失败→多模态，全部失败给安装指引） | modelscope、transformers>=5.3 |
+| `模型/模型工具.py` | 参数/状态/显存/加载器工具；保存前**自动创建目标目录**（结果/ 等） | torch |
 | `模型/微调.py` | 分类训练器（全参/LoRA 通用）+ LoRA 包装 | torch、peft(LoRA) |
 | `模型/计算重要度.py` | Fisher 信息（梯度平方累加） | torch |
 | `补丁/补丁格式.py` | 补丁 = 元数据 + {参数名:{索引,差值}} | torch |
@@ -121,6 +121,8 @@ diamond-architecture/
 9. **Fisher 重要度表用 bf16 累加**（比 fp32 省一半显存）并开启梯度检查点：老写法 `grad.float()**2` 每步生成 fp32 大临时张量（词嵌入 2GB），是 Fisher 阶段 OOM 主因。
 10. **PYTORCH_ALLOC_CONF=expandable_segments:True**：主入口在 import torch 前设置，减少显存碎片。
 11. **冒烟模式**：一键缩小规模，先验证流程，再跑正式实验。
+12. **模型加载前先查本地缓存**：`模型/模型加载.py` 的 `查找已下载模型路径` 会按 modelscope 缓存规则（`缓存/模型/models/<ID中/换-->>/snapshots/<版本>/`，有 config.json/configuration.json 即完整）检查是否已下载；已有直接复用，没有才联网下载。配置 `是否强制重新下载=True` 可强制重下。
+13. **所有写文件前自动建目录**：`结果/`、`结果/补丁/` 被 .gitignore 忽略、clone 下来不存在；`保存状态到磁盘` 等都在写文件前 `mkdir(parents=True, exist_ok=True)`（补丁格式/汇总报告本来就有，v0.1.5 给 保存状态到磁盘 补上，否则首次运行报 FileNotFoundError）。
 
 ---
 
@@ -200,3 +202,11 @@ diamond-architecture/
     - `README.md`/`MEMORY.md`：同步说明（优化器选择、显存量级、FAQ）。
   - **预期显存**：全参微调约 10~11GB、Fisher 约 12GB，A10 24G 足够。
   - **待用户反馈**：重跑后下一个报错点（重点盯：多模态模型纯文本前向、LoRA target_modules 探测、正式模式的显存余量）。
+
+- **[2026-09-02] v0.1.5 修复：首次运行报 FileNotFoundError（结果/ 目录不存在）+ 新增模型缓存判断**
+  - **用户报错**：`FileNotFoundError: ... 结果/基座A状态.pt`（`保存状态到磁盘` 时，`结果/` 目录被 .gitignore 忽略、clone 后不存在，而写文件前没自动建目录）。
+  - **修复**：`模型/模型工具.py` 的 `保存状态到磁盘` 在 torch.save 前 `Path(保存路径).parent.mkdir(parents=True, exist_ok=True)`（补丁格式.py/汇总报告.py 原本已有，这处是唯一遗漏）。
+  - **新增（用户要求）**：模型加载前先判断本地是否有缓存。
+    - `模型/模型加载.py` 新增 `查找已下载模型路径`：按 modelscope 缓存规则检查 `缓存/模型/models/<ID中/换-->>/snapshots/<版本>/`，存在 config.json/configuration.json 即视为已下载完整。
+    - `下载模型` 改为：先查缓存，已有直接复用（打印"跳过下载"）；没有才 snapshot_download；`配置/配置.py` 新增 `是否强制重新下载`（默认 False）可强制重下。
+  - **待用户反馈**：重跑后下一个报错点（重点盯：多模态模型纯文本前向、LoRA target_modules 探测、补丁生成/评估阶段）。
