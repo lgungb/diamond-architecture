@@ -13,6 +13,39 @@
 
 # ---------- 导入标准库 ----------
 import torch                          # 深度学习框架
+import inspect                        # 用来检测优化器支持哪些参数（兼容不同 torch 版本）
+
+
+def 创建兼容优化器(优化器类, 待训练参数, 参数字典: dict):
+    """创建优化器，自动过滤掉当前 torch 版本不支持的参数。
+
+    为什么需要这个：不同 torch 版本的优化器参数签名可能不一样。
+    例如 torch 2.11 开发版的 Adafactor 移除了 scale_parameter 参数，
+    如果写死传参会直接报 TypeError。这里用 inspect 检测签名，
+    只传当前版本支持的参数，不支持的自动忽略并打印提示。
+
+    参数：
+      优化器类    ：例如 torch.optim.Adafactor
+      待训练参数 ：模型中 requires_grad=True 的参数
+      参数字典    ：希望传入的参数，例如 {"lr": 3e-5, "weight_decay": 0.01}
+    返回：
+      优化器实例
+    """
+    try:
+        # 检测该优化器的 __init__ 签名，拿到它支持的所有参数名
+        签名 = inspect.signature(优化器类.__init__)
+        支持的参数名 = set(签名.parameters.keys())
+        # 只保留当前版本支持的参数
+        过滤后的参数 = {键: 值 for 键, 值 in 参数字典.items() if 键 in 支持的参数名}
+        # 被过滤掉的参数（当前版本不支持）
+        被忽略的参数 = set(参数字典.keys()) - 支持的参数名
+        if 被忽略的参数:
+            print(f"  提示：当前 torch 版本的 {优化器类.__name__} 不支持参数 {被忽略的参数}，已自动忽略")
+        return 优化器类(待训练参数, **过滤后的参数)
+    except Exception as 异常:
+        # 连签名检测都失败了（极端情况），只传最基本的 lr，保证能跑
+        print(f"  警告：优化器参数检测失败（{异常}），将只使用学习率创建优化器")
+        return 优化器类(待训练参数, lr=参数字典.get("lr"))
 
 
 # ---------- 一、分类训练器 ----------
@@ -43,20 +76,29 @@ class 分类训练器:
         #  - adamw：经典优化器，但 2B 全参微调需要约 27GB fp32 优化器状态，24G 卡装不下
         需要训练的参数 = (参数 for 参数 in 模型.parameters() if 参数.requires_grad)
         if 配置.优化器 == "adafactor":
-            self.优化器 = torch.optim.Adafactor(
+            # Adafactor：优化器状态占用极小，2B 全参微调在小显存显卡上才跑得动
+            # 注意：不同 torch 版本的 Adafactor 参数签名可能不同（如 2.11 开发版移除了 scale_parameter），
+            # 所以用 创建兼容优化器 自动过滤不支持的参数，避免 TypeError
+            self.优化器 = 创建兼容优化器(
+                torch.optim.Adafactor,
                 需要训练的参数,
-                lr=配置.学习率,          # 学习率
-                scale_parameter=False,   # 不用自适应缩放学习率（我们用固定学习率）
-                relative_step=False,     # 不用相对步长（按上面给的固定 lr 训练）
-                warmup_init=False,       # 不做内置 warmup 初始化
-                weight_decay=0.01,       # 权重衰减（轻微防止过拟合）
+                {
+                    "lr": 配置.学习率,          # 学习率
+                    "scale_parameter": False,   # 不用自适应缩放学习率（我们用固定学习率）
+                    "relative_step": False,     # 不用相对步长（按上面给的固定 lr 训练）
+                    "warmup_init": False,       # 不做内置 warmup 初始化
+                    "weight_decay": 0.01,       # 权重衰减（轻微防止过拟合）
+                },
             )
         else:
             # adamw 路线（需要大显存，仅当显卡够大时用）
-            self.优化器 = torch.optim.AdamW(
+            self.优化器 = 创建兼容优化器(
+                torch.optim.AdamW,
                 需要训练的参数,
-                lr=配置.学习率,          # 学习率
-                weight_decay=0.01,       # 权重衰减
+                {
+                    "lr": 配置.学习率,          # 学习率
+                    "weight_decay": 0.01,       # 权重衰减
+                },
             )
         # 交叉熵损失（分类任务的标准损失）
         self.损失函数 = torch.nn.CrossEntropyLoss()

@@ -225,3 +225,10 @@ diamond-architecture/
   - **核心结论**：PyTorch ROCm 版把 AMD GPU 映射成 "cuda" 设备，代码**无需修改**即可运行（`torch.cuda.is_available()` / `.to("cuda")` 全部兼容）。192G 显存充裕，不会 OOM。
   - **修改**：`工具/环境体检.py` 的【4.5】增加 `torch.version.hip` 检测 + GPU 设备名/显存显示；【7】显卡信息在 nvidia-smi 不存在时自动改用 rocm-smi，并提示"可能是 AMD GPU 环境"。MEMORY 风险清单补充第 9 条。
   - **用户操作**：直接 `git pull` 后运行即可，不需要装 torch（镜像已预装 2.11.0 ROCm 版）；先跑 `python 工具/环境体检.py` 确认 GPU 状态，再跑 `python 运行/主入口.py`。
+
+- **[2026-09-02] v0.1.8 修复：torch 2.11 开发版 Adafactor 参数不兼容（scale_parameter 被移除）**
+  - **用户进展**：AMD ROCm 环境上前 5 步全部跑通！环境自检通过（torch 2.11.0 ROCm 版，191.7GB 显存）；模型加载成功（1.88B 参数，cuda 设备）；基座 A 准确率 37.5%（符合随机预期）；Fisher 计算完成；基座 A 状态保存成功。
+  - **报错**：步骤 6 全参数微调时 `TypeError: Adafactor.__init__() got an unexpected keyword argument 'scale_parameter'`。
+  - **根因**：torch 2.11.0 开发版（ROCm 镜像预装）的 Adafactor 参数签名变了，移除了 `scale_parameter`（可能还有 `relative_step`/`warmup_init`）。老版本 torch 这些参数都存在，写死传参在新版上报 TypeError。
+  - **修复**：`模型/微调.py` 新增 `创建兼容优化器` 函数——用 `inspect.signature` 检测优化器支持哪些参数，只传当前版本支持的，不支持的自动忽略并打印提示。Adafactor 和 AdamW 都改用这个兼容函数创建。这样不管 torch 哪个版本都能跑。
+  - **用户操作**：`git pull` 后直接重跑 `python 运行/主入口.py` 即可（模型已缓存，不会重新下载；前 5 步会快速重跑，重点看第 6 步微调是否开始）。
