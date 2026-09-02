@@ -63,7 +63,7 @@ diamond-architecture/
 | 文件 | 干什么 | 依赖/条件 |
 | --- | --- | --- |
 | `运行/主入口.py` | 唯一启动点；自检→硬性检查(torch版本+GPU)→跑实验 | 无 |
-| `配置/配置.py` | 全部参数；用户只改这里（含 优化器=adafactor 默认） | 无第三方库 |
+| `配置/配置.py` | 全部参数；用户只改这里（含 优化器=adafactor 默认、梯度检查点默认关闭） | 无第三方库 |
 | `工具/环境自检.py` | 检查 Python/库/显卡/模型缓存 | torch(可缺)、modelscope |
 | `工具/环境体检.py` | 深度诊断（解释器/库导入/torch GPU状态/pip记录/显卡），出问题先跑它 | 仅标准库 |
 | `数据/合成数据.py` | 生成训练/测试/校准三套密语数据 | 需要分词器、torch |
@@ -71,7 +71,7 @@ diamond-architecture/
 | `数据/数据接口.py` | 数据统一入口 + 类别词校验 | 无 |
 | `模型/模型加载.py` | **先查本地缓存**（查找已下载模型路径）→没有才 snapshot_download；自适应加载（文本失败→多模态，全部失败给安装指引） | modelscope、transformers>=5.3 |
 | `模型/模型工具.py` | 参数/状态/显存/加载器工具；保存前**自动创建目标目录**（结果/ 等） | torch |
-| `模型/微调.py` | 分类训练器（全参/LoRA 通用）+ LoRA 包装；**优化器用 inspect 自动兼容不同 torch 版本** | torch、peft(LoRA) |
+| `模型/微调.py` | 分类训练器（全参/LoRA 通用）+ LoRA 包装；**优化器用 inspect 自动兼容不同 torch 版本**；**训练进度详细打印（每10batch+ROCm编译提示）** | torch、peft(LoRA) |
 | `模型/计算重要度.py` | Fisher 信息（梯度平方累加） | torch |
 | `补丁/补丁格式.py` | 补丁 = 元数据 + {参数名:{索引,差值}} | torch |
 | `补丁/生成补丁.py` | 策略A/B/C 选位（两阶段全局topk）+ Δ 计算 | torch |
@@ -124,6 +124,7 @@ diamond-architecture/
 12. **模型加载前先查本地缓存**：`模型/模型加载.py` 的 `查找已下载模型路径` 会按 modelscope 缓存规则（`缓存/模型/models/<ID中/换-->>/snapshots/<版本>/`，有 config.json/configuration.json 即完整）检查是否已下载；已有直接复用，没有才联网下载。配置 `是否强制重新下载=True` 可强制重下。
 13. **所有写文件前自动建目录**：`结果/`、`结果/补丁/` 被 .gitignore 忽略、clone 下来不存在；`保存状态到磁盘` 等都在写文件前 `mkdir(parents=True, exist_ok=True)`（补丁格式/汇总报告本来就有，v0.1.5 给 保存状态到磁盘 补上，否则首次运行报 FileNotFoundError）。
 14. **优化器参数用 inspect 自动兼容不同 torch 版本**：torch 2.11 开发版（ROCm 镜像预装）的 Adafactor 移除了 `scale_parameter` 等参数，写死传参会报 TypeError。`模型/微调.py` 的 `创建兼容优化器` 函数用 `inspect.signature` 检测当前版本支持哪些参数，只传支持的，不支持的自动忽略并打印提示。Adafactor 和 AdamW 都走这个兼容层。
+15. **大显存默认关闭梯度检查点**：192G 显存跑 2B 模型完全不需要梯度检查点（它是用计算换显存的小显存技巧），开启反而更慢且可能与多模态模型前向有兼容性问题导致挂起。v0.1.9 起 `是否开启梯度检查点` 默认 False，24G 以下小显存才需要手动改 True。
 
 ---
 
@@ -151,6 +152,7 @@ diamond-architecture/
 8. **魔搭 notebook 的终端 `python` 与 jupyter 内核可能是两套环境**：在终端跑 主入口.py 前先跑 `python 工具/环境体检.py` 确认 torch 状态；torch 版本不对时主入口会提前拦截给指引（v0.1.3+）。
 9. **AMD GPU（ROCm）环境也能跑**：魔搭有"AMD GPU 环境"（如 8核/200GB/192G 显存，镜像 ubuntu22.04-rocm7.2.3-py312-torch2.11.0）。PyTorch ROCm 版把 AMD GPU 映射成 "cuda" 设备，`torch.cuda.is_available()` / `.to("cuda")` / `torch.cuda.memory_allocated()` 全部兼容，**代码无需修改**。唯一区别：没有 `nvidia-smi`，改用 `rocm-smi`；`torch.version.cuda` 为 None 但 `torch.version.hip` 有值。环境体检.py v0.1.7+ 已支持自动检测 ROCm。192G 显存非常充裕，不会 OOM。
 10. **torch 2.11 开发版的 API 可能与稳定版不同**：ROCm 镜像预装的 torch 2.11.0+git 是开发版，Adafactor 等优化器的参数签名可能移除了旧参数（如 scale_parameter）。已用 `创建兼容优化器`（inspect 签名检测）解决。后续若遇到其他 API 不兼容，按同样思路处理。
+11. **ROCm 首次运行大模型可能触发 MIOpen kernel 编译，耗时 5-15 分钟**：这是 AMD GPU 的正常现象，不是卡死。v0.1.9 起训练开始前会打印提示，每 10 个 batch 打印一次进度，方便判断是否在正常运行。如果 15 分钟后连第一个 batch 都没过去，再排查。
 
 ---
 
@@ -234,3 +236,11 @@ diamond-architecture/
   - **根因**：torch 2.11.0 开发版（ROCm 镜像预装）的 Adafactor 参数签名变了，移除了 `scale_parameter`（可能还有 `relative_step`/`warmup_init`）。老版本 torch 这些参数都存在，写死传参在新版上报 TypeError。
   - **修复**：`模型/微调.py` 新增 `创建兼容优化器` 函数——用 `inspect.signature` 检测优化器支持哪些参数，只传当前版本支持的，不支持的自动忽略并打印提示。Adafactor 和 AdamW 都改用这个兼容函数创建。这样不管 torch 哪个版本都能跑。
   - **用户操作**：`git pull` 后直接重跑 `python 运行/主入口.py` 即可（模型已缓存，不会重新下载；前 5 步会快速重跑，重点看第 6 步微调是否开始）。
+
+- **[2026-09-02] v0.1.9 修复：训练阶段卡住无输出（梯度检查点兼容性 + ROCm 首次 kernel 编译无提示）**
+  - **用户现象**：步骤 6 全参数微调时，打印完 `[transformers] use_cache=True is incompatible with gradient checkpointing. Setting use_cache=False` 后长时间卡住，无任何输出。
+  - **根因（两个）**：① 梯度检查点默认开启，但 192G 显存完全不需要（它是用计算换显存的小显存技巧），开启后训练更慢且可能与多模态模型前向有兼容性问题导致挂起；② 训练循环只在每 4 个 batch（梯度累积步）才打印一次，且没有"首次 ROCm 编译 kernel 可能很慢"的提示，用户无法判断是死了还是在跑。
+  - **修复**：
+    - `配置/配置.py`：`是否开启梯度检查点` 默认从 True 改为 False（192G 大显存不需要，关闭更快更稳定），注释说明 24G 以下小显存才需要开启。
+    - `模型/微调.py`：训练方法增加详细进度打印——训练前打印总轮数/每轮 batch 数/总步数 + "首次 ROCm 运行前几个 batch 可能很慢（编译 kernel，5-15 分钟）"提示；每轮开始/结束打印；每 10 个 batch 打印一次进度（即使没到梯度更新步也能看到在跑）；训练完成打印总 batch 数。
+  - **用户操作**：`git pull` 后重跑 `python 运行/主入口.py`。这次会在步骤 6 开始时看到"开始训练：共 3 轮，每轮 N 个 batch"+"首次 ROCm 可能 5-15 分钟编译 kernel"提示，然后每 10 个 batch 打印一次进度。如果前 15 分钟内有"已处理 10/XX 个 batch"出现，说明在正常跑；如果 15 分钟后连第一个 batch 都没过去，再反馈。
