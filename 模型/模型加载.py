@@ -48,10 +48,12 @@ def 加载模型主干(配置, 本地路径: str):
     """根据配置的【加载方式】加载模型主干部分（只含权重，不含分词器）。
 
     说明：Qwen3.5 官方推荐用 AutoModelForImageTextToText（多模态类）加载；
-    但部分用户可能拿到的是纯文本版或希望用文本方式加载，因此做三种方式：
-      - 配置.加载方式 == "纯文本" ：强制 AutoModelForCausalLM（纯文本解码器）
-      - 配置.加载方式 == "多模态"：强制 AutoModelForImageTextToText
+    但部分用户可能拿到的是纯文本版或希望用文本方式加载，因此做多种方式：
+      - 配置.加载方式 == "纯文本" ：只试 AutoModelForCausalLM（纯文本解码器）
+      - 配置.加载方式 == "多模态"：只试 AutoModelForImageTextToText（多模态）
       - 配置.加载方式 == "自动"  ：先试文本，失败再试多模态（最省心，默认）
+    如果所有方式都失败（最常见原因：transformers 版本太老、不认识 qwen3_5
+    架构），会抛出一个带【安装指引】的明确报错，而不是让用户看到一堆堆栈。
     参数：
       配置     ：配置项对象。
       本地路径 ：模型在本地硬盘上的目录路径。
@@ -60,22 +62,41 @@ def 加载模型主干(配置, 本地路径: str):
     """
     from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
 
-    # 根据配置分流
-    if 配置.加载方式 == "纯文本":
-        # 纯文本方式：最普通的因果语言模型加载
-        return AutoModelForCausalLM.from_pretrained(本地路径, trust_remote_code=True)
-    if 配置.加载方式 == "多模态":
-        # 多模态方式：Qwen3.5 原版官方加载方式
-        return AutoModelForImageTextToText.from_pretrained(本地路径, trust_remote_code=True)
+    def 尝试加载(加载器, 方式名: str):
+        """用指定加载器尝试加载一次；失败打印原因并返回 None（不抛异常）。"""
+        try:
+            print(f"  正在用【{方式名}】方式加载模型 ...")
+            return 加载器.from_pretrained(本地路径, trust_remote_code=True)
+        except Exception as 异常:
+            print(f"    【{方式名}】方式加载失败：{异常}")
+            return None
 
-    # "自动"方式：先试文本，失败再试多模态
-    try:
-        # 第一次尝试：文本加载
-        return AutoModelForCausalLM.from_pretrained(本地路径, trust_remote_code=True)
-    except Exception:
-        # 文本方式失败：多半因为这是多模态模型，改用多模态方式
-        print("普通文本方式加载失败，正在自动改用多模态方式加载 ...")
-        return AutoModelForImageTextToText.from_pretrained(本地路径, trust_remote_code=True)
+    # 根据配置分流：决定要尝试哪几种方式、按什么顺序
+    if 配置.加载方式 == "纯文本":
+        尝试列表 = [(AutoModelForCausalLM, "纯文本")]
+    elif 配置.加载方式 == "多模态":
+        尝试列表 = [(AutoModelForImageTextToText, "多模态")]
+    else:  # "自动"
+        尝试列表 = [
+            (AutoModelForCausalLM, "文本"),
+            (AutoModelForImageTextToText, "多模态"),
+        ]
+
+    # 依次尝试，拿到第一个成功的模型就返回
+    for 加载器, 方式名 in 尝试列表:
+        模型 = 尝试加载(加载器, 方式名)
+        if 模型 is not None:
+            return 模型
+
+    # 全部失败：给出明确、可操作的报错（重点提示升级 transformers）
+    raise RuntimeError(
+        "模型加载失败（所有方式都不行）。最常见原因是 transformers 版本太老，"
+        "不认识 qwen3_5 架构（Qwen3.5 要求 transformers>=5.3.0）。\n"
+        "请依次尝试：\n"
+        "  第 1 步：pip install \"transformers>=5.3.0\"\n"
+        "  第 2 步（还不行时）：pip install git+https://github.com/huggingface/transformers.git\n"
+        "装完后再重新运行本程序。"
+    )
 
 
 # ---------- 三、设置权重精度 ----------
@@ -102,11 +123,21 @@ def 设置模型精度(模型, 数据类型: str):
 def 加载分词器(本地路径: str):
     """加载分词器，并确保它有"补位符"（padding 需要用到）。
 
+    说明：Qwen3.5 是多模态模型，个别环境直接加载 AutoTokenizer 可能失败，
+    这时会自动改用 AutoProcessor，并从处理器里取出它自带的分词器。
     参数：本地路径 模型目录。
     返回：分词器对象。
     """
     from transformers import AutoTokenizer
-    分词器 = AutoTokenizer.from_pretrained(本地路径, trust_remote_code=True)
+    try:
+        # 常规方式：直接加载分词器
+        分词器 = AutoTokenizer.from_pretrained(本地路径, trust_remote_code=True)
+    except Exception as 异常:
+        # 备用方式：加载多模态处理器，再取它内部的 tokenizer
+        print(f"AutoTokenizer 加载失败（{异常}），正在改用 AutoProcessor ...")
+        from transformers import AutoProcessor
+        处理器 = AutoProcessor.from_pretrained(本地路径, trust_remote_code=True)
+        分词器 = 处理器.tokenizer
     # 如果模型没定义补位符（Qwen 系列常见），用结束符顶上（业界标准做法）
     if 分词器.pad_token is None:
         分词器.pad_token = 分词器.eos_token

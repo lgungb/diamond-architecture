@@ -5,17 +5,21 @@
 #     !pip install -r requirements.txt
 #
 # 重要说明：
-#  1. transformers 必须 >= 5.2.0：Qwen3.5 系列（架构名 qwen3_5）
-#     只有 transformers 5.2.0 能正确加载，5.3.0 目前会报错，不要升级更高。
+#  1. transformers 必须 >= 5.3.0：Qwen3.5 系列（架构名 qwen3_5）只有
+#     transformers 5.3.0 及以上版本才认识这个架构（5.2.0 及以下会报
+#     "model type qwen3_5 无法识别" 的错误）。
 #  2. modelscope 是"从魔搭下载模型/数据集"的官方库，notebook 通常已自带。
-#  3. peft 用于跑 LoRA 对比基线实验（可选的对照组）。
+#  3. qwen_vl_utils 是 Qwen 官方的多模态预处理工具包，纯文本任务用不到，
+#     但装上可避免个别环境加载分词器/处理器时缺依赖（体积很小，装了无妨）。
+#  4. peft 用于跑 LoRA 对比基线实验（可选的对照组）。
 # ============================================================
 
 torch>=2.1.0
-transformers==5.2.0
+transformers>=5.3.0
 accelerate>=0.30.0
 modelscope>=1.18.0
 datasets>=2.19.0
 peft>=0.13.0
 numpy>=1.24.0
 safetensors>=0.4.0
+qwen-vl-utils>=0.0.14
