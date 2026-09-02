@@ -27,9 +27,11 @@ def 主函数():
     print("第一步：环境自检 ...")
     from 工具.环境自检 import 运行自检
     运行自检()
-    # 2) 硬性检查：没有 PyTorch 就直接停下，给出明确安装指引。
-    #    之前发现：有的环境 transformers 装了但 torch 没装，
-    #    程序会一路崩到"加载模型"才报错，很难看懂。现在提前拦截。
+    # 2) 硬性检查：PyTorch 必须"能导入 + 版本够新 + 有 GPU"。
+    #    三个条件缺一不可，否则直接停下并给出指引：
+    #    ① torch 已安装（能 import）
+    #    ② torch 版本 >= 2.5（transformers 5.x 硬性要求，否则会"禁用 PyTorch"）
+    #    ③ 有可用 GPU（2B 全参数微调在 CPU 上不可行）
     try:
         import torch  # noqa: F401  只验证能导入，不真正使用
     except ImportError:
@@ -39,9 +41,31 @@ def 主函数():
             "  ① 你在笔记本里用 pip 装库时，装到了另一个 Python 环境（终端 python 和 notebook 内核是两套）。\n"
             "  ② torch 确实没装过。\n"
             "解决办法（在 notebook 里逐个执行，装完必须【重启内核/运行时】再重跑本程序）：\n"
-            "    !pip install torch --index-url https://download.pytorch.org/whl/cu121\n"
-            "  如果上面这条报错，先执行  !nvidia-smi  看显卡和 CUDA 版本，把输出发给我，我给你精确命令。\n"
+            "    !pip install torch --index-url https://download.pytorch.org/whl/cu124\n"
             "装好 torch 后，重新运行本程序即可继续。"
+        )
+        return
+    # 版本检查：transformers 5.x 要求 torch>=2.5，否则会禁用 PyTorch
+    try:
+        主版本号, 次版本号 = (int(段) for 段 in torch.__version__.split("+")[0].split(".")[:2])
+    except Exception:
+        主版本号, 次版本号 = 0, 0   # 解析失败时按最旧处理，宁可报错也不要悄悄放行
+    if (主版本号, 次版本号) < (2, 5):
+        print(
+            f"\n❌ 当前 torch 版本太旧（{torch.__version__}），transformers 5.x 要求 >=2.5。\n"
+            "解决办法：先确认你在【GPU 实例】上（看 nvidia-smi 是否存在），然后执行：\n"
+            "    !pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu124\n"
+            "装完重启内核再重跑。"
+        )
+        return
+    # GPU 检查：没有 GPU 时 2B 全参微调在 CPU 上不可行（会跑几小时到几天）
+    if not torch.cuda.is_available():
+        print(
+            "\n❌ 当前环境【没有可用 GPU】（torch 是 CPU 版，或当前是 CPU 实例，连 nvidia-smi 都没有）。\n"
+            "本实验要全参数微调 2B 模型，CPU 上不现实。\n"
+            "解决办法：到魔搭【新建 Notebook】时选择【GPU 免费实例】（例如 A10 24G），\n"
+            "在该实例里重新 git clone 本仓库、安装依赖后运行。\n"
+            "（如果你有 GPU 但没被识别，重启实例后再看 nvidia-smi 是否出现）"
         )
         return
     # 3) 读配置

@@ -13,7 +13,7 @@
 **全参数微调后只保存 Top 2%~6% 关键参数的差值（硬核补丁），推理时盖回常驻基座**，能否逼近全量微调效果。
 
 - 模型：`Qwen/Qwen3.5-2B`（魔搭，约 2.27B 参数 / 4.57GB，**多模态**模型，架构 `qwen3_5`）
-- 运行环境：modelscope Notebook（免费 GPU，一般 A10 24G）
+- 运行环境：modelscope Notebook（**必须 GPU 实例**，如 A10 24G；CPU 实例跑不动 2B 全参微调）
 - 任务：自造的"三分类密语任务"（离线、可控、干净）
 - 用户身份：非编程专家，代码要"能跑 + 能看懂"，本地只存改不运行
 
@@ -25,7 +25,7 @@
 diamond-architecture/
 ├── README.md               # 人读的说明（快速开始/常见问题）
 ├── MEMORY.md               # ★本文件：AI/人 记忆
-├── requirements.txt        # 依赖（transformers>=5.3.0 是硬约束！）
+├── requirements.txt        # 依赖（transformers>=5.3.0、torch>=2.5.0 是硬约束！）
 ├── .gitignore              # 忽略 缓存/ 结果/ __pycache__/
 │
 ├── 配置/
@@ -62,10 +62,10 @@ diamond-architecture/
 
 | 文件 | 干什么 | 依赖/条件 |
 | --- | --- | --- |
-| `运行/主入口.py` | 唯一启动点；自检→读配置→跑实验 | 无 |
+| `运行/主入口.py` | 唯一启动点；自检→硬性检查(torch版本+GPU)→跑实验 | 无 |
 | `配置/配置.py` | 全部参数；用户只改这里 | 无第三方库 |
 | `工具/环境自检.py` | 检查 Python/库/显卡/模型缓存 | torch(可缺)、modelscope |
-| `工具/环境体检.py` | 深度诊断（解释器/库导入/pip记录/显卡），出问题先跑它 | 仅标准库 |
+| `工具/环境体检.py` | 深度诊断（解释器/库导入/torch GPU状态/pip记录/显卡），出问题先跑它 | 仅标准库 |
 | `数据/合成数据.py` | 生成训练/测试/校准三套密语数据 | 需要分词器、torch |
 | `数据/真实数据.py` | 可选：魔搭真实数据 | datasets；需用户填字段 |
 | `数据/数据接口.py` | 数据统一入口 + 类别词校验 | 无 |
@@ -115,8 +115,9 @@ diamond-architecture/
 3. **Fisher 在基座 A 上算**（对齐 FISH-Mask 标准做法/白皮书意图），配置里留了"专家"选项未实现。
 4. **补丁评估 = 加载一次 + 反复 load_state_dict 重置**：省时省显存；显存调度顺序：Fisher 重要度(8GB fp32) 算完立刻搬 CPU → 再全参微调 → 微调完拿完专家参数就释放 → 再加载 A 评估补丁。
 5. **加载自适应**：Qwen3.5 是多模态模型，`AutoModelForCausalLM` 失败会自动切 `AutoModelForImageTextToText`；配置 `加载方式="自动"`。
-6. **transformers>=5.3.0 是硬约束**：qwen3_5 架构只有 5.3.0+ 才认识（曾误以为 5.2.0 可行导致用户报错，已修正；5.2.0 及以下报 "model type qwen3_5 无法识别"）。requirements 里已锁 >=5.3.0。
-7. **冒烟模式**：一键缩小规模，先验证流程，再跑正式实验。
+6. **transformers>=5.3.0 是硬约束**：qwen3_5 架构只有 5.3.0+ 才认识（曾误以为 5.2.0 可行导致用户报错，已修正）。requirements 里已锁 >=5.3.0。
+7. **torch>=2.5.0 且 GPU 版 是硬约束**：transformers 5.x 要求 torch>=2.5（否则禁用 PyTorch）；且 2B 全参微调必须 GPU（CPU 实例不可行）。主入口做三段硬检：能 import→版本≥2.5→有 CUDA。
+8. **冒烟模式**：一键缩小规模，先验证流程，再跑正式实验。
 
 ---
 
@@ -135,11 +136,12 @@ diamond-architecture/
 ## 6. 已知风险 / 待用户反馈确认的点
 
 1. **Qwen3.5-2B 是多模态模型**，用纯文本方式喂文本应可行。加载已做多重兜底：AutoModelForCausalLM → AutoModelForImageTextToText → 全部失败时抛带安装指引的报错（提示升级 transformers>=5.3.0）。分词器同样有 AutoTokenizer → AutoProcessor 兜底。
-2. **全参数微调 2B 模型显存压力**：默认 bf16 + 梯度检查点 + batch=4 累积4；若 OOM，把 batch 降到 1~2。
-3. **Fisher 全模型 fp32 buffer ≈ 8GB**：加上模型本身需 ≥16GB 显存；A10 24G 够。小显存环境需要改成分层计算（未实现，注释里已提醒）。
-4. **LoRA 的 target_modules 是运行时探测的**（q_proj 等），若 Qwen3.5 命名不同会报错，用户反馈后调整。
-5. **策略C 的"中段"是简化实现**（每张量局部而非全局），量级正确但口径与 A/B 不同。
-6. 补丁评估/切换耗时是**显存内覆盖**，不含磁盘加载补丁的时间；报告里已注明。
+2. **运行环境必须是 GPU 实例 + GPU 版 torch(>=2.5)**：用户的第一个笔记本是 CPU 实例（torch 2.3.1+cpu，无 nvidia-smi），已被硬检拦截。正式跑必须在魔搭新建 GPU 免费实例（A10 24G）。
+3. **全参数微调 2B 模型显存压力**：默认 bf16 + 梯度检查点 + batch=4 累积4；若 OOM，把 batch 降到 1~2。
+4. **Fisher 全模型 fp32 buffer ≈ 8GB**：加上模型本身需 ≥16GB 显存；A10 24G 够。小显存环境需要改成分层计算（未实现，注释里已提醒）。
+5. **LoRA 的 target_modules 是运行时探测的**（q_proj 等），若 Qwen3.5 命名不同会报错，用户反馈后调整。
+6. **策略C 的"中段"是简化实现**（每张量局部而非全局），量级正确但口径与 A/B 不同。
+7. 补丁评估/切换耗时是**显存内覆盖**，不含磁盘加载补丁的时间；报告里已注明。
 
 ---
 
@@ -173,3 +175,14 @@ diamond-architecture/
   - **修复**：`运行/主入口.py` 增加 torch 硬性前置检查——缺 torch 直接停下并打印安装指引（含 `pip install torch --index-url https://download.pytorch.org/whl/cu121` 与"装完重启内核"提示），不再一路崩到模型加载；`工具/环境自检.py` 的 torch 缺失提示也改为针对性安装命令。
   - **新增**：`工具/环境体检.py` —— 独立诊断脚本（只依赖标准库），一键输出：解释器路径/版本、关键库能否被当前解释器 import、pip 记录、nvidia-smi 显卡信息。用于定位"库装错环境/显卡看不到"问题。
   - **待用户反馈**：跑 环境体检.py 的输出（尤其 torch 是否 [有]、nvidia-smi 的 CUDA 版本），据此给精确安装命令。
+
+- **[2026-09-02] v0.1.3 修复：CPU 实例 + torch 版本太旧（诊断结果确认）**
+  - **用户环境体检结果（真实）**：解释器 `/usr/local/bin/python`，Python 3.11.11；`torch=2.3.1+cpu`（**CPU 版且版本旧**）；`transformers=5.16.1`；modelscope/accelerate/peft/datasets 齐全；**nvidia-smi 不存在 → 当前是 CPU 实例，无 GPU**。
+  - **根因**：① transformers 5.x 要求 torch>=2.5，torch 2.3.1 太旧 → transformers 直接"Disabling PyTorch"（这就是报错第一行的来源）；② 当前 notebook 是 CPU 实例，即使 torch 装对，2B 全参微调在 CPU 上也不可行。
+  - **修复**：
+    - `requirements.txt`：`torch>=2.1.0` → `torch>=2.5.0`，注释写明"必须是 GPU 版"。
+    - `工具/环境自检.py`：torch 最低版本改 2.5.0；版本不够时标【错误】；无 CUDA 时从"警告"升级为【错误】并提示换 GPU 实例。
+    - `运行/主入口.py`：硬性检查升级为三段——①能 import torch ②版本>=2.5 ③有 GPU；任一不满足都停下并给明确指引。
+    - `工具/环境体检.py`：新增【4.5】torch GPU 状态（torch.version.cuda 为 None 即 CPU 版）。
+    - `README.md`：快速开始加"必须 GPU 实例"警告 + torch 常见问题两条。
+  - **用户下一步（关键）**：到魔搭【新建 Notebook】选【GPU 免费实例】（A10 24G），在那里重新 clone + 装依赖 + 运行；不要在 CPU 实例上跑。
