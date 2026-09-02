@@ -31,7 +31,8 @@ diamond-architecture/
 ├── 配置/
 │   └── 配置.py             # ★参数总控：模型ID、数据规模、补丁清单、开关
 ├── 工具/
-│   └── 环境自检.py         # 体检：Python/显卡/依赖/模型缓存
+│   ├── 环境自检.py         # 体检：Python/显卡/依赖/模型缓存
+│   └── 环境体检.py         # 深度诊断：解释器路径/库能否导入/pip记录/显卡
 ├── 数据/
 │   ├── 合成数据.py         # 默认任务：三分类密语数据生成器
 │   ├── 真实数据.py         # 可选：从魔搭下载真实分类数据（半成品，需填字段）
@@ -64,6 +65,7 @@ diamond-architecture/
 | `运行/主入口.py` | 唯一启动点；自检→读配置→跑实验 | 无 |
 | `配置/配置.py` | 全部参数；用户只改这里 | 无第三方库 |
 | `工具/环境自检.py` | 检查 Python/库/显卡/模型缓存 | torch(可缺)、modelscope |
+| `工具/环境体检.py` | 深度诊断（解释器/库导入/pip记录/显卡），出问题先跑它 | 仅标准库 |
 | `数据/合成数据.py` | 生成训练/测试/校准三套密语数据 | 需要分词器、torch |
 | `数据/真实数据.py` | 可选：魔搭真实数据 | datasets；需用户填字段 |
 | `数据/数据接口.py` | 数据统一入口 + 类别词校验 | 无 |
@@ -164,3 +166,10 @@ diamond-architecture/
   - **加载逻辑增强**：`模型/模型加载.py` 的 加载模型主干 改为"依次尝试文本→多模态→全部失败给明确安装指引"；加载分词器 增加 AutoProcessor 兜底。
   - **用户操作**：在 notebook 执行 `pip install "transformers>=5.3.0"`（或重装 requirements）后重跑。
   - **待观察**：Qwen3.5 多模态模型纯文本前向是否正常、LoRA 目标模块探测是否命中（Qwen3.5 是 Gated DeltaNet 混合架构，层名可能与 q_proj 等不同，报错再调）。
+
+- **[2026-09-02] v0.1.2 修复：运行环境缺 PyTorch**
+  - **用户报错**：transformers 已能加载（qwen3_5 错误消失），但报 "AutoModelForCausalLM requires the PyTorch library but it was not found in your environment"。
+  - **根因**：当前 `python` 解释器环境里没有 torch（很可能 notebook 内核与终端 python 是两套环境，或 torch 未装/未重启内核）。
+  - **修复**：`运行/主入口.py` 增加 torch 硬性前置检查——缺 torch 直接停下并打印安装指引（含 `pip install torch --index-url https://download.pytorch.org/whl/cu121` 与"装完重启内核"提示），不再一路崩到模型加载；`工具/环境自检.py` 的 torch 缺失提示也改为针对性安装命令。
+  - **新增**：`工具/环境体检.py` —— 独立诊断脚本（只依赖标准库），一键输出：解释器路径/版本、关键库能否被当前解释器 import、pip 记录、nvidia-smi 显卡信息。用于定位"库装错环境/显卡看不到"问题。
+  - **待用户反馈**：跑 环境体检.py 的输出（尤其 torch 是否 [有]、nvidia-smi 的 CUDA 版本），据此给精确安装命令。

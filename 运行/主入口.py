@@ -26,16 +26,30 @@ def 主函数():
     # 1) 环境自检（缺库/缺显卡会有明确提示）
     print("第一步：环境自检 ...")
     from 工具.环境自检 import 运行自检
-    自检通过 = 运行自检()
-    if not 自检通过:
-        print("\n⚠️ 自检发现错误项。如果缺少关键库，请先执行：pip install -r requirements.txt")
-        # 即使有错误也继续尝试（有的库缺失只是跳过对应功能），让报错信息更具体
-    # 2) 读配置
+    运行自检()
+    # 2) 硬性检查：没有 PyTorch 就直接停下，给出明确安装指引。
+    #    之前发现：有的环境 transformers 装了但 torch 没装，
+    #    程序会一路崩到"加载模型"才报错，很难看懂。现在提前拦截。
+    try:
+        import torch  # noqa: F401  只验证能导入，不真正使用
+    except ImportError:
+        print(
+            "\n❌ 当前 Python 环境里【没有安装 PyTorch（torch）】，实验无法运行。\n"
+            "原因排查（两种最常见情况）：\n"
+            "  ① 你在笔记本里用 pip 装库时，装到了另一个 Python 环境（终端 python 和 notebook 内核是两套）。\n"
+            "  ② torch 确实没装过。\n"
+            "解决办法（在 notebook 里逐个执行，装完必须【重启内核/运行时】再重跑本程序）：\n"
+            "    !pip install torch --index-url https://download.pytorch.org/whl/cu121\n"
+            "  如果上面这条报错，先执行  !nvidia-smi  看显卡和 CUDA 版本，把输出发给我，我给你精确命令。\n"
+            "装好 torch 后，重新运行本程序即可继续。"
+        )
+        return
+    # 3) 读配置
     from 配置.配置 import 配置
-    # 3) 跑完整实验
+    # 4) 跑完整实验
     from 实验.实验总控 import 运行完整实验
     运行完整实验(配置)
-    # 4) 完成提示
+    # 5) 完成提示
     print("\n🎉 实验全部完成！请查看 结果/报告.md 获取对比结论。")
 
 
