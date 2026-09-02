@@ -13,6 +13,7 @@
 
 import torch                          # 深度学习框架
 import gc                             # Python 垃圾回收（释放内存用）
+from pathlib import Path              # 路径工具（用来自动创建保存目录）
 
 
 # ---------- 一、参数收集与统计 ----------
@@ -42,6 +43,10 @@ def 保存状态到磁盘(模型, 保存路径) -> str:
       保存路径（字符串）。
     """
     保存路径 = str(保存路径)
+    # 【重要】自动创建目标文件所在的目录（例如 结果/ 目录）。
+    # 因为 结果/ 目录被 .gitignore 忽略，仓库刚 clone 下来时它还不存在，
+    # 如果不先建目录，torch.save 会报"目录不存在"（FileNotFoundError）。
+    Path(保存路径).parent.mkdir(parents=True, exist_ok=True)
     # 收集所有参数，统一搬到 CPU 并转 fp16 深拷贝
     状态字典 = {名字: 参数.detach().cpu().half().clone() for 名字, 参数 in 模型.named_parameters()}
     torch.save(状态字典, 保存路径)
