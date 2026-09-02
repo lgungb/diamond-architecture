@@ -108,13 +108,13 @@ def 加载模型主干(配置, 本地路径: str):
     from transformers import AutoModelForCausalLM, AutoModelForImageTextToText
 
     def 尝试加载(加载器, 方式名: str):
-        """用指定加载器尝试加载一次；失败打印原因并返回 None（不抛异常）。"""
+        """用指定加载器尝试加载一次；失败打印原因并返回 (None, 原因)（不抛异常）。"""
         try:
             print(f"  正在用【{方式名}】方式加载模型 ...")
-            return 加载器.from_pretrained(本地路径, trust_remote_code=True)
+            return 加载器.from_pretrained(本地路径, trust_remote_code=True), None
         except Exception as 异常:
             print(f"    【{方式名}】方式加载失败：{异常}")
-            return None
+            return None, str(异常)
 
     # 根据配置分流：决定要尝试哪几种方式、按什么顺序
     if 配置.加载方式 == "纯文本":
@@ -127,13 +127,33 @@ def 加载模型主干(配置, 本地路径: str):
             (AutoModelForImageTextToText, "多模态"),
         ]
 
-    # 依次尝试，拿到第一个成功的模型就返回
+    # 依次尝试，拿到第一个成功的模型就返回；同时收集失败原因，用于后面给准确报错
+    失败原因汇总 = []
     for 加载器, 方式名 in 尝试列表:
-        模型 = 尝试加载(加载器, 方式名)
+        模型, 原因 = 尝试加载(加载器, 方式名)
         if 模型 is not None:
             return 模型
+        if 原因:
+            失败原因汇总.append(f"【{方式名}】{原因}")
 
-    # 全部失败：给出明确、可操作的报错（重点提示升级 transformers）
+    # 全部失败：根据失败原因给【针对性】报错，两种最常见原因必须区分开：
+    #   ① 失败原因里出现 "PyTorch" / "Disabling PyTorch"
+    #      → 是 torch 缺失或版本太旧（transformers 5.x 要求 torch>=2.5，否则直接禁用 PyTorch）。
+    #        注意：这不是 transformers 版本问题！解决方法是装 GPU 版的新 torch。
+    #   ② 其余情况 → 通常是 transformers 版本太老，不认识 qwen3_5 架构，需要升级 transformers。
+    全部失败原因 = "；".join(失败原因汇总)
+    if "PyTorch" in 全部失败原因 or "Disabling PyTorch" in 全部失败原因:
+        raise RuntimeError(
+            "模型加载失败：当前 Python 环境里【PyTorch(torch) 不可用】。\n"
+            "transformers 5.x 检测到 torch 缺失或版本太旧（要求 torch>=2.5），自动禁用了 PyTorch，"
+            "所以模型加载失败——这【不是】 transformers 版本问题。\n"
+            "解决办法（在 GPU 实例上）：\n"
+            "  第 1 步：pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu124\n"
+            "  第 2 步：重启内核/运行时后再重新运行本程序。\n"
+            "检查是否装对：python -c \"import torch; print(torch.__version__, torch.version.cuda)\"\n"
+            "应输出类似 2.6.0+cu124 的版本号，且第二段不是 None（None 说明是 CPU 版）。"
+        )
+    # 其它原因：通常是 transformers 版本太老，不认识 qwen3_5 架构
     raise RuntimeError(
         "模型加载失败（所有方式都不行）。最常见原因是 transformers 版本太老，"
         "不认识 qwen3_5 架构（Qwen3.5 要求 transformers>=5.3.0）。\n"

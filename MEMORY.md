@@ -146,6 +146,8 @@ diamond-architecture/
 4. **LoRA 的 target_modules 是运行时探测的**（q_proj 等），若 Qwen3.5 命名不同会报错，用户反馈后调整。
 5. **策略C 的"中段"是简化实现**（每张量局部而非全局），量级正确但口径与 A/B 不同。
 6. 补丁评估/切换耗时是**显存内覆盖**，不含磁盘加载补丁的时间；报告里已注明。
+7. **modelscope 镜像预装 torch 可能是 2.3.1（旧版/CPU 版）**：如果用户 `pip install -r requirements.txt` 只升级了 transformers 到 5.x 而 torch 仍是旧版，transformers 5.x 会"Disabling PyTorch"→ 模型加载报"PyTorch was not found"。这【不是】 transformers 版本问题，必须 `pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu124` 装 GPU 版 torch>=2.5 并重启内核。模型加载.py 的报错已能区分"PyTorch 问题"和"transformers 版本问题"。
+8. **魔搭 notebook 的终端 `python` 与 jupyter 内核可能是两套环境**：在终端跑 主入口.py 前先跑 `python 工具/环境体检.py` 确认 torch 状态；torch 版本不对时主入口会提前拦截给指引（v0.1.3+）。
 
 ---
 
@@ -210,3 +212,9 @@ diamond-architecture/
     - `模型/模型加载.py` 新增 `查找已下载模型路径`：按 modelscope 缓存规则检查 `缓存/模型/models/<ID中/换-->>/snapshots/<版本>/`，存在 config.json/configuration.json 即视为已下载完整。
     - `下载模型` 改为：先查缓存，已有直接复用（打印"跳过下载"）；没有才 snapshot_download；`配置/配置.py` 新增 `是否强制重新下载`（默认 False）可强制重下。
   - **待用户反馈**：重跑后下一个报错点（重点盯：多模态模型纯文本前向、LoRA target_modules 探测、补丁生成/评估阶段）。
+
+- **[2026-09-02] v0.1.6 增强：模型加载报错区分"torch 不可用"和"transformers 版本问题"**
+  - **用户报错**：模型下载成功（缓存逻辑生效），但加载时报 `AutoModelForCausalLM requires the PyTorch library but it was not found`（transformers 5.x 检测到 torch 缺失/版本太旧→Disabling PyTorch）。**且用户运行的是旧版代码**（下载文案/主入口行号可证，未包含 v0.1.5 的缓存判断与 torch 硬检）。
+  - **诊断**：报错直接原因是当前 python 环境 torch 不可用（modelscope 镜像预装 torch 2.3.1 旧版/CPU 版 + transformers 5.x 要求 torch>=2.5 → 禁用 PyTorch）。不是 transformers 版本问题。
+  - **修复**：`模型/模型加载.py` 的 `加载模型主干` 收集每个方式的失败原因，全部失败后判断：失败含 "PyTorch"/"Disabling PyTorch" → 给"装 GPU 版 torch>=2.5 + 重启内核"的准确指引；否则才提示升级 transformers。MEMORY 风险清单补充第 7/8 条。
+  - **用户操作（关键）**：① 确认在 GPU 实例；② `git pull` 拉最新 v0.1.6（旧代码会绕过 torch 硬检）；③ `python 工具/环境体检.py` 看 torch 是否 GPU 版；④ 若 torch 旧/CPU 版：`pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu124` 后重启内核再跑。
