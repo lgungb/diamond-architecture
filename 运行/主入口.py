@@ -12,6 +12,7 @@
 
 # ---------- 导入标准库 ----------
 import sys                          # 系统相关
+import os                           # 环境变量
 from pathlib import Path            # 路径工具
 
 # ---------- 第一步：把项目根目录加入模块搜索路径 ----------
@@ -19,6 +20,11 @@ from pathlib import Path            # 路径工具
 项目根 = Path(__file__).resolve().parent.parent
 if str(项目根) not in sys.path:
     sys.path.insert(0, str(项目根))
+
+# ---------- 第二步：设置 PyTorch 显存分配策略 ----------
+# expandable_segments 能显著减少显存碎片（尤其反复加载/释放大模型时），
+# 缓解 "CUDA out of memory"。必须在导入 torch 之前设置才生效。
+os.environ.setdefault("PYTORCH_ALLOC_CONF", "expandable_segments:True")
 
 
 def 主函数():

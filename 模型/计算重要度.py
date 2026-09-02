@@ -14,8 +14,9 @@
 #
 # 需要的条件：
 #   - 依赖 torch。
-#   - 需要一块足够显存的显卡（重要度表用 fp32 保存，2B 模型约占用 8GB 显存，
-#     和模型本身加在一起需要 16GB 以上；如果报显存不够，请调小批次或换大显存环境）。
+#   - 需要一块足够显存的显卡。为省显存：重要度表用 bf16 累加（比 fp32 省一半），
+#     并开启梯度检查点；即便如此，2B 模型仍建议在 24G 显卡上跑。
+#     如果还报显存不够，请调小批次或换大显存环境。
 # ============================================================
 
 import torch                          # 深度学习框架
@@ -30,15 +31,26 @@ def 计算Fisher重要度(配置, 模型, 校准数据加载器, 类别token编�
       校准数据加载器    ：由校准数据包成的 DataLoader（每批取几条）。
       类别token编号     ：类别词 token 编号。
     返回：
-      重要度字典 {参数名: 与参数同形状的 fp32 张量}。
+      重要度字典 {参数名: 与参数同形状的张量}。
       值越大表示该参数对任务越关键。
     """
     # 1) 准备工作：模型切到评估模式（关掉 dropout，保证打分稳定），并允许计算梯度
     模型.eval()
+    # 开启梯度检查点：和训练一样，用一点计算量换大量显存，防止 Fisher 阶段 OOM
+    if 配置.是否开启梯度检查点:
+        try:
+            模型.gradient_checkpointing_enable()
+        except Exception:
+            print("提示：当前模型不支持梯度检查点，Fisher 阶段已跳过（不影响运行）。")
     设备 = next(模型.parameters()).device
-    # 用"梯度平方和"做重要度估计，fp32 累加避免精度丢失
+    # 重要度累加表：优先用 bf16（省一半显存）。我们只需要"相对排序"来选 TopK，
+    # bf16 的精度足够；显卡不支持 bf16 时自动退回 fp32。
+    if torch.cuda.is_available() and torch.cuda.is_bf16_supported():
+        累加类型 = torch.bfloat16
+    else:
+        累加类型 = torch.float32
     重要度 = {
-        名字: torch.zeros_like(参数, dtype=torch.float32, device=设备)
+        名字: torch.zeros_like(参数, dtype=累加类型, device=设备)
         for 名字, 参数 in 模型.named_parameters()
     }
     # 交叉熵损失（和训练用的完全一致，保证口径统一）
@@ -62,10 +74,12 @@ def 计算Fisher重要度(配置, 模型, 校准数据加载器, 类别token编�
             类别得分 = logits[:, -1, 类别token编号]
             损失 = 损失函数(类别得分, 标签编号)
         损失.backward()
-        # 3) 把每个参数的梯度平方累加到重要度表里
+        # 3) 把每个参数的梯度平方累加到重要度表里。
+        #    直接用参数的原始 dtype 平方累加，避免生成 fp32 大临时张量
+        #    （词嵌入层很大，老写法一个临时张量就 2GB，正是爆显存的原因）。
         for 名字, 参数 in 模型.named_parameters():
             if 参数.grad is not None:
-                重要度[名字] += (参数.grad.detach().float() ** 2)
+                重要度[名字] += (参数.grad.detach() ** 2)
         # 4) 清空梯度，准备下一条
         模型.zero_grad(set_to_none=True)
         已用样本数 += 输入编号.size(0)

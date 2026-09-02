@@ -38,13 +38,26 @@ class 分类训练器:
         self.模型 = 模型
         # 注意：模型对象不一定有 .device 属性，取"第一个参数的设备"最保险
         self.类别token编号 = 类别token编号.to(next(模型.parameters()).device)
-        # 用 AdamW 优化器（业界主流，稳定）。
-        # 只对"需要梯度"的参数生效（LoRA 模式下基座权重被冻结，就不用白占优化器）
-        self.优化器 = torch.optim.AdamW(
-            (参数 for 参数 in 模型.parameters() if 参数.requires_grad),
-            lr=配置.学习率,          # 学习率
-            weight_decay=0.01,       # 权重衰减（轻微防止过拟合）
-        )
+        # 选择优化器（重要：这决定会不会爆显存）
+        #  - adafactor（默认）：优化器状态占用极小，2B 全参微调在 24G 显卡上才跑得动
+        #  - adamw：经典优化器，但 2B 全参微调需要约 27GB fp32 优化器状态，24G 卡装不下
+        需要训练的参数 = (参数 for 参数 in 模型.parameters() if 参数.requires_grad)
+        if 配置.优化器 == "adafactor":
+            self.优化器 = torch.optim.Adafactor(
+                需要训练的参数,
+                lr=配置.学习率,          # 学习率
+                scale_parameter=False,   # 不用自适应缩放学习率（我们用固定学习率）
+                relative_step=False,     # 不用相对步长（按上面给的固定 lr 训练）
+                warmup_init=False,       # 不做内置 warmup 初始化
+                weight_decay=0.01,       # 权重衰减（轻微防止过拟合）
+            )
+        else:
+            # adamw 路线（需要大显存，仅当显卡够大时用）
+            self.优化器 = torch.optim.AdamW(
+                需要训练的参数,
+                lr=配置.学习率,          # 学习率
+                weight_decay=0.01,       # 权重衰减
+            )
         # 交叉熵损失（分类任务的标准损失）
         self.损失函数 = torch.nn.CrossEntropyLoss()
 
