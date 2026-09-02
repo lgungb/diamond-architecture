@@ -136,10 +136,17 @@ def 检查关键库() -> list:
         except ImportError:
             # 库没装：看它是不是必须的，必须的标错误，可选的标警告
             状态 = "错误" if 库名 in ("torch", "transformers", "modelscope") else "警告"
+            # torch 缺失是最常见问题，给出针对性安装提示
+            if 库名 == "torch":
+                安装提示 = ("未安装。请先执行：pip install torch --index-url "
+                            "https://download.pytorch.org/whl/cu121 ，装完重启内核；"
+                            "再执行：pip install -r requirements.txt")
+            else:
+                安装提示 = "请执行：pip install -r requirements.txt"
             结果列表.append({
                 "项目": f"{库名}",
                 "状态": 状态,
-                "说明": f"未安装（{用途}）。请执行：pip install -r requirements.txt",
+                "说明": f"未安装（{用途}）。{安装提示}",
             })
     return 结果列表
 
