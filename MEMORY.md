@@ -148,6 +148,7 @@ diamond-architecture/
 6. 补丁评估/切换耗时是**显存内覆盖**，不含磁盘加载补丁的时间；报告里已注明。
 7. **modelscope 镜像预装 torch 可能是 2.3.1（旧版/CPU 版）**：如果用户 `pip install -r requirements.txt` 只升级了 transformers 到 5.x 而 torch 仍是旧版，transformers 5.x 会"Disabling PyTorch"→ 模型加载报"PyTorch was not found"。这【不是】 transformers 版本问题，必须 `pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu124` 装 GPU 版 torch>=2.5 并重启内核。模型加载.py 的报错已能区分"PyTorch 问题"和"transformers 版本问题"。
 8. **魔搭 notebook 的终端 `python` 与 jupyter 内核可能是两套环境**：在终端跑 主入口.py 前先跑 `python 工具/环境体检.py` 确认 torch 状态；torch 版本不对时主入口会提前拦截给指引（v0.1.3+）。
+9. **AMD GPU（ROCm）环境也能跑**：魔搭有"AMD GPU 环境"（如 8核/200GB/192G 显存，镜像 ubuntu22.04-rocm7.2.3-py312-torch2.11.0）。PyTorch ROCm 版把 AMD GPU 映射成 "cuda" 设备，`torch.cuda.is_available()` / `.to("cuda")` / `torch.cuda.memory_allocated()` 全部兼容，**代码无需修改**。唯一区别：没有 `nvidia-smi`，改用 `rocm-smi`；`torch.version.cuda` 为 None 但 `torch.version.hip` 有值。环境体检.py v0.1.7+ 已支持自动检测 ROCm。192G 显存非常充裕，不会 OOM。
 
 ---
 
@@ -218,3 +219,9 @@ diamond-architecture/
   - **诊断**：报错直接原因是当前 python 环境 torch 不可用（modelscope 镜像预装 torch 2.3.1 旧版/CPU 版 + transformers 5.x 要求 torch>=2.5 → 禁用 PyTorch）。不是 transformers 版本问题。
   - **修复**：`模型/模型加载.py` 的 `加载模型主干` 收集每个方式的失败原因，全部失败后判断：失败含 "PyTorch"/"Disabling PyTorch" → 给"装 GPU 版 torch>=2.5 + 重启内核"的准确指引；否则才提示升级 transformers。MEMORY 风险清单补充第 7/8 条。
   - **用户操作（关键）**：① 确认在 GPU 实例；② `git pull` 拉最新 v0.1.6（旧代码会绕过 torch 硬检）；③ `python 工具/环境体检.py` 看 torch 是否 GPU 版；④ 若 torch 旧/CPU 版：`pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu124` 后重启内核再跑。
+
+- **[2026-09-02] v0.1.7 适配：支持 AMD GPU（ROCm）环境检测**
+  - **用户选择**：魔搭"AMD GPU 环境"（8核/200GB/192G 显存，镜像 ubuntu22.04-rocm7.2.3-py312-torch2.11.0-1.39.0）。
+  - **核心结论**：PyTorch ROCm 版把 AMD GPU 映射成 "cuda" 设备，代码**无需修改**即可运行（`torch.cuda.is_available()` / `.to("cuda")` 全部兼容）。192G 显存充裕，不会 OOM。
+  - **修改**：`工具/环境体检.py` 的【4.5】增加 `torch.version.hip` 检测 + GPU 设备名/显存显示；【7】显卡信息在 nvidia-smi 不存在时自动改用 rocm-smi，并提示"可能是 AMD GPU 环境"。MEMORY 风险清单补充第 9 条。
+  - **用户操作**：直接 `git pull` 后运行即可，不需要装 torch（镜像已预装 2.11.0 ROCm 版）；先跑 `python 工具/环境体检.py` 确认 GPU 状态，再跑 `python 运行/主入口.py`。

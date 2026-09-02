@@ -62,12 +62,17 @@ def 主函数():
                  "accelerate", "peft", "datasets", "qwen_vl_utils"]:
         print("    " + 检查能否导入(库名))
     print()
-    print("【4.5】torch 的 GPU 状态（CPU 版 的 torch.version.cuda 是 None）：")
+    print("【4.5】torch 的 GPU 状态（CPU 版 torch.version.cuda 是 None；AMD ROCm 版 torch.version.hip 有值）：")
     try:
         import torch
         print("    torch 版本:", torch.__version__)
         print("    torch.cuda.is_available():", torch.cuda.is_available())
-        print("    torch.version.cuda:", torch.version.cuda)
+        print("    torch.version.cuda:", torch.version.cuda, "（NVIDIA CUDA 版才有值）")
+        print("    torch.version.hip:", getattr(torch.version, "hip", "无此属性"), "（AMD ROCm 版才有值）")
+        if torch.cuda.is_available():
+            # ROCm 版 torch 也能通过 torch.cuda 拿到 AMD GPU 的名称和显存
+            print("    GPU 设备名:", torch.cuda.get_device_name(0))
+            print("    GPU 显存总量(GB):", round(torch.cuda.get_device_properties(0).total_memory / (1024 ** 3), 1))
     except Exception as 异常:
         print("    torch 不可用:", 异常)
     print()
@@ -76,8 +81,16 @@ def 主函数():
     print("【6】pip 记录里是否装过 torch（未装会显示提示）：")
     print("    " + 运行命令([sys.executable, "-m", "pip", "show", "torch"]))
     print()
-    print("【7】显卡信息（nvidia-smi）：")
-    print("    " + 运行命令(["nvidia-smi"]))
+    print("【7】显卡信息（NVIDIA 用 nvidia-smi；AMD ROCm 用 rocm-smi，nvidia-smi 不存在是正常的）：")
+    nvidia输出 = 运行命令(["nvidia-smi"])
+    # 如果 nvidia-smi 不存在（报错含 No such file / not found / 执行失败），说明可能是 AMD ROCm 环境
+    if ("No such file" in nvidia输出 or "not found" in nvidia输出
+            or "执行失败" in nvidia输出 or nvidia输出.startswith("(")):
+        rocm输出 = 运行命令(["rocm-smi"])
+        print("    nvidia-smi 不存在 → 可能是 AMD GPU（ROCm）环境，改用 rocm-smi：")
+        print("    " + rocm输出)
+    else:
+        print("    " + nvidia输出)
     print("=" * 60)
     print("请把以上整段输出发给维护者。")
     print("=" * 60)
