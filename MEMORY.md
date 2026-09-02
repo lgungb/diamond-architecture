@@ -71,7 +71,7 @@ diamond-architecture/
 | `数据/数据接口.py` | 数据统一入口 + 类别词校验 | 无 |
 | `模型/模型加载.py` | **先查本地缓存**（查找已下载模型路径）→没有才 snapshot_download；自适应加载（文本失败→多模态，全部失败给安装指引） | modelscope、transformers>=5.3 |
 | `模型/模型工具.py` | 参数/状态/显存/加载器工具；保存前**自动创建目标目录**（结果/ 等） | torch |
-| `模型/微调.py` | 分类训练器（全参/LoRA 通用）+ LoRA 包装 | torch、peft(LoRA) |
+| `模型/微调.py` | 分类训练器（全参/LoRA 通用）+ LoRA 包装；**优化器用 inspect 自动兼容不同 torch 版本** | torch、peft(LoRA) |
 | `模型/计算重要度.py` | Fisher 信息（梯度平方累加） | torch |
 | `补丁/补丁格式.py` | 补丁 = 元数据 + {参数名:{索引,差值}} | torch |
 | `补丁/生成补丁.py` | 策略A/B/C 选位（两阶段全局topk）+ Δ 计算 | torch |
@@ -123,6 +123,7 @@ diamond-architecture/
 11. **冒烟模式**：一键缩小规模，先验证流程，再跑正式实验。
 12. **模型加载前先查本地缓存**：`模型/模型加载.py` 的 `查找已下载模型路径` 会按 modelscope 缓存规则（`缓存/模型/models/<ID中/换-->>/snapshots/<版本>/`，有 config.json/configuration.json 即完整）检查是否已下载；已有直接复用，没有才联网下载。配置 `是否强制重新下载=True` 可强制重下。
 13. **所有写文件前自动建目录**：`结果/`、`结果/补丁/` 被 .gitignore 忽略、clone 下来不存在；`保存状态到磁盘` 等都在写文件前 `mkdir(parents=True, exist_ok=True)`（补丁格式/汇总报告本来就有，v0.1.5 给 保存状态到磁盘 补上，否则首次运行报 FileNotFoundError）。
+14. **优化器参数用 inspect 自动兼容不同 torch 版本**：torch 2.11 开发版（ROCm 镜像预装）的 Adafactor 移除了 `scale_parameter` 等参数，写死传参会报 TypeError。`模型/微调.py` 的 `创建兼容优化器` 函数用 `inspect.signature` 检测当前版本支持哪些参数，只传支持的，不支持的自动忽略并打印提示。Adafactor 和 AdamW 都走这个兼容层。
 
 ---
 
@@ -149,6 +150,7 @@ diamond-architecture/
 7. **modelscope 镜像预装 torch 可能是 2.3.1（旧版/CPU 版）**：如果用户 `pip install -r requirements.txt` 只升级了 transformers 到 5.x 而 torch 仍是旧版，transformers 5.x 会"Disabling PyTorch"→ 模型加载报"PyTorch was not found"。这【不是】 transformers 版本问题，必须 `pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu124` 装 GPU 版 torch>=2.5 并重启内核。模型加载.py 的报错已能区分"PyTorch 问题"和"transformers 版本问题"。
 8. **魔搭 notebook 的终端 `python` 与 jupyter 内核可能是两套环境**：在终端跑 主入口.py 前先跑 `python 工具/环境体检.py` 确认 torch 状态；torch 版本不对时主入口会提前拦截给指引（v0.1.3+）。
 9. **AMD GPU（ROCm）环境也能跑**：魔搭有"AMD GPU 环境"（如 8核/200GB/192G 显存，镜像 ubuntu22.04-rocm7.2.3-py312-torch2.11.0）。PyTorch ROCm 版把 AMD GPU 映射成 "cuda" 设备，`torch.cuda.is_available()` / `.to("cuda")` / `torch.cuda.memory_allocated()` 全部兼容，**代码无需修改**。唯一区别：没有 `nvidia-smi`，改用 `rocm-smi`；`torch.version.cuda` 为 None 但 `torch.version.hip` 有值。环境体检.py v0.1.7+ 已支持自动检测 ROCm。192G 显存非常充裕，不会 OOM。
+10. **torch 2.11 开发版的 API 可能与稳定版不同**：ROCm 镜像预装的 torch 2.11.0+git 是开发版，Adafactor 等优化器的参数签名可能移除了旧参数（如 scale_parameter）。已用 `创建兼容优化器`（inspect 签名检测）解决。后续若遇到其他 API 不兼容，按同样思路处理。
 
 ---
 
@@ -225,3 +227,10 @@ diamond-architecture/
   - **核心结论**：PyTorch ROCm 版把 AMD GPU 映射成 "cuda" 设备，代码**无需修改**即可运行（`torch.cuda.is_available()` / `.to("cuda")` 全部兼容）。192G 显存充裕，不会 OOM。
   - **修改**：`工具/环境体检.py` 的【4.5】增加 `torch.version.hip` 检测 + GPU 设备名/显存显示；【7】显卡信息在 nvidia-smi 不存在时自动改用 rocm-smi，并提示"可能是 AMD GPU 环境"。MEMORY 风险清单补充第 9 条。
   - **用户操作**：直接 `git pull` 后运行即可，不需要装 torch（镜像已预装 2.11.0 ROCm 版）；先跑 `python 工具/环境体检.py` 确认 GPU 状态，再跑 `python 运行/主入口.py`。
+
+- **[2026-09-02] v0.1.8 修复：torch 2.11 开发版 Adafactor 参数不兼容（scale_parameter 被移除）**
+  - **用户进展**：AMD ROCm 环境上前 5 步全部跑通！环境自检通过（torch 2.11.0 ROCm 版，191.7GB 显存）；模型加载成功（1.88B 参数，cuda 设备）；基座 A 准确率 37.5%（符合随机预期）；Fisher 计算完成；基座 A 状态保存成功。
+  - **报错**：步骤 6 全参数微调时 `TypeError: Adafactor.__init__() got an unexpected keyword argument 'scale_parameter'`。
+  - **根因**：torch 2.11.0 开发版（ROCm 镜像预装）的 Adafactor 参数签名变了，移除了 `scale_parameter`（可能还有 `relative_step`/`warmup_init`）。老版本 torch 这些参数都存在，写死传参在新版上报 TypeError。
+  - **修复**：`模型/微调.py` 新增 `创建兼容优化器` 函数——用 `inspect.signature` 检测优化器支持哪些参数，只传当前版本支持的，不支持的自动忽略并打印提示。Adafactor 和 AdamW 都改用这个兼容函数创建。这样不管 torch 哪个版本都能跑。
+  - **用户操作**：`git pull` 后直接重跑 `python 运行/主入口.py` 即可（模型已缓存，不会重新下载；前 5 步会快速重跑，重点看第 6 步微调是否开始）。
