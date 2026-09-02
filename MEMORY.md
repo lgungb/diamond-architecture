@@ -173,3 +173,14 @@ diamond-architecture/
   - **修复**：`运行/主入口.py` 增加 torch 硬性前置检查——缺 torch 直接停下并打印安装指引（含 `pip install torch --index-url https://download.pytorch.org/whl/cu121` 与"装完重启内核"提示），不再一路崩到模型加载；`工具/环境自检.py` 的 torch 缺失提示也改为针对性安装命令。
   - **新增**：`工具/环境体检.py` —— 独立诊断脚本（只依赖标准库），一键输出：解释器路径/版本、关键库能否被当前解释器 import、pip 记录、nvidia-smi 显卡信息。用于定位"库装错环境/显卡看不到"问题。
   - **待用户反馈**：跑 环境体检.py 的输出（尤其 torch 是否 [有]、nvidia-smi 的 CUDA 版本），据此给精确安装命令。
+
+- **[2026-09-02] v0.1.3 修复：CPU 实例 + torch 版本太旧（诊断结果确认）**
+  - **用户环境体检结果（真实）**：解释器 `/usr/local/bin/python`，Python 3.11.11；`torch=2.3.1+cpu`（**CPU 版且版本旧**）；`transformers=5.16.1`；modelscope/accelerate/peft/datasets 齐全；**nvidia-smi 不存在 → 当前是 CPU 实例，无 GPU**。
+  - **根因**：① transformers 5.x 要求 torch>=2.5，torch 2.3.1 太旧 → transformers 直接"Disabling PyTorch"（这就是报错第一行的来源）；② 当前 notebook 是 CPU 实例，即使 torch 装对，2B 全参微调在 CPU 上也不可行。
+  - **修复**：
+    - `requirements.txt`：`torch>=2.1.0` → `torch>=2.5.0`，注释写明"必须是 GPU 版"。
+    - `工具/环境自检.py`：torch 最低版本改 2.5.0；版本不够时标【错误】；无 CUDA 时从"警告"升级为【错误】并提示换 GPU 实例。
+    - `运行/主入口.py`：硬性检查升级为三段——①能 import torch ②版本>=2.5 ③有 GPU；任一不满足都停下并给明确指引。
+    - `工具/环境体检.py`：新增【4.5】torch GPU 状态（torch.version.cuda 为 None 即 CPU 版）。
+    - `README.md`：快速开始加"必须 GPU 实例"警告 + torch 常见问题两条。
+  - **用户下一步（关键）**：到魔搭【新建 Notebook】选【GPU 免费实例】（A10 24G），在那里重新 clone + 装依赖 + 运行；不要在 CPU 实例上跑。

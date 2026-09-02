@@ -62,6 +62,15 @@ def 主函数():
                  "accelerate", "peft", "datasets", "qwen_vl_utils"]:
         print("    " + 检查能否导入(库名))
     print()
+    print("【4.5】torch 的 GPU 状态（CPU 版 的 torch.version.cuda 是 None）：")
+    try:
+        import torch
+        print("    torch 版本:", torch.__version__)
+        print("    torch.cuda.is_available():", torch.cuda.is_available())
+        print("    torch.version.cuda:", torch.version.cuda)
+    except Exception as 异常:
+        print("    torch 不可用:", 异常)
+    print()
     print("【5】当前解释器对应的 pip 版本：")
     print("    " + 运行命令([sys.executable, "-m", "pip", "--version"]))
     print("【6】pip 记录里是否装过 torch（未装会显示提示）：")

@@ -81,10 +81,15 @@ def 检查显卡() -> list:
                     "说明": f"显存仅 {显存GB:.1f} GB，2B 全参数微调可能紧张，建议把【批次大小】调小到 1~2",
                 })
         else:
+            # 没有 CUDA 显卡：torch 可能是 CPU 版，或确实没有 GPU。
+            # 本实验要全参数微调 2B 模型，CPU 上不可行，必须标"错误"让用户换 GPU 实例。
             结果列表.append({
                 "项目": "显卡",
-                "状态": "警告",
-                "说明": "没有检测到 CUDA 显卡，将使用 CPU 计算（非常慢，建议换到 modelscope 的 GPU 免费环境）",
+                "状态": "错误",
+                "说明": ("没有检测到 CUDA 显卡（可能是 CPU 版 torch，或当前是 CPU 实例）。"
+                         "本实验要在 2B 模型上做全参数微调，CPU 不可行。"
+                         "请到魔搭【新建 Notebook】并选择【GPU 免费实例】（如 A10 24G），"
+                         "再到该实例里重新拉取本仓库运行。"),
             })
     except Exception as 异常:
         结果列表.append({
@@ -102,8 +107,10 @@ def 检查关键库() -> list:
     """
     结果列表 = []
     # 每个库：名字、要求的最低版本
+    # 注意：torch 要求 >=2.5.0 是因为 transformers 5.x 硬性要求；
+    #       且本实验要全参数微调 2B 模型，必须是 GPU 版 torch。
     库清单 = [
-        ("torch", "2.1.0", "深度学习框架，必须"),
+        ("torch", "2.5.0", "深度学习框架，必须>=2.5.0（transformers 5.x 要求），且要 GPU 版"),
         ("transformers", "5.3.0", "加载/微调模型，必须>=5.3.0 才能支持 Qwen3.5（qwen3_5 架构）"),
         ("modelscope", "1.18.0", "从魔搭下载模型，必须"),
         ("peft", "0.13.0", "跑 LoRA 对比基线用，可缺但会跳过 LoRA 实验"),
@@ -128,9 +135,11 @@ def 检查关键库() -> list:
                     "说明": f"已安装 {版本号}（{用途}）",
                 })
             else:
+                # 版本太旧：torch 版本不够会直接被 transformers 禁用（报"PyTorch was not found"），所以标"错误"
+                状态 = "错误" if 库名 == "torch" else "警告"
                 结果列表.append({
                     "项目": f"{库名}",
-                    "状态": "警告",
+                    "状态": 状态,
                     "说明": f"已安装 {版本号}，但要求 >= {最低版本}，请执行：pip install -r requirements.txt",
                 })
         except ImportError:

@@ -15,6 +15,9 @@
 
 ## 二、快速开始（在 modelscope Notebook 里）
 
+> ⚠️ **前提：必须用 GPU 实例。** 在魔搭【新建 Notebook】时选择 **GPU 免费实例**（如 A10 24G）。
+> 本实验要全参数微调 2B 模型，CPU 实例（没有 nvidia-smi）跑不动，程序也会自动拦截并提示你换实例。
+
 1. **把仓库拉到 Notebook**（在魔搭 Notebook 的终端里）：
    ```bash
    git clone <你的仓库地址>
@@ -25,6 +28,7 @@
    pip install -r requirements.txt
    ```
    > ⚠️ 关键：`transformers` 必须装 **>= 5.3.0**（Qwen3.5 的 qwen3_5 架构只有 5.3.0 及以上才认识；5.2.0 及以下会报"模型类型无法识别"）。
+   > ⚠️ 关键：`torch` 必须装 **>= 2.5.0 且为 GPU 版**（transformers 5.x 要求 torch>=2.5，否则会"禁用 PyTorch"；GPU 实例一般已自带，没有就执行 `!pip install torch --index-url https://download.pytorch.org/whl/cu124`）。
 3. **先跑一次冒烟测试**（几分钟走通全流程，确认环境没问题）：
    ```bash
    python 运行/主入口.py
@@ -69,6 +73,8 @@
 ## 五、常见问题
 
 - **transformers 版本报错（不认识 qwen3_5 架构）？** 执行 `pip install "transformers>=5.3.0"`；仍不行再 `pip install git+https://github.com/huggingface/transformers.git`。
+- **报"PyTorch was not found / PyTorch >= 2.5 is required"？** 说明 torch 没装或版本太旧（如 2.3.1）。先确认你在 GPU 实例上，再执行 `!pip install --upgrade torch --index-url https://download.pytorch.org/whl/cu124`，装完重启内核。
+- **提示没有 GPU（nvidia-smi 不存在）？** 你当前是 CPU 实例，本实验跑不动。请到魔搭新建一个【GPU 免费实例】重新拉取仓库运行。
 - **显卡显存不够？** 把 `配置/配置.py` 里 `批次大小` 调到 `1`，`是否开启梯度检查点` 保持 `True`。
 - **模型下载慢/失败？** 这是国内网络访问魔搭，一般很快；确认能访问 modelscope.cn。
 - **"类别词不是单个token"报错？** 换 `配置.py` 里 `任务类别` 为常见的单字词。
